@@ -255,9 +255,9 @@
 
         &:disabled {
             /* Probably needs to be more gray */
-            cursor: initial;
-            opacity: .7;
-            filter: grayscale(.8)
+            cursor: default;
+            opacity: .5;
+            filter: grayscale(1)
         }
 
         &:hover:not(:disabled, :focus, :focus-visible, :focus-within) {
@@ -422,6 +422,7 @@
             justify-content: end;
             gap: 1rem;
         }
+
     }
 
     table {
