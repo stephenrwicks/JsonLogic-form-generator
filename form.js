@@ -64,12 +64,12 @@ const Form = (config) => {
         }
         if (f.type === 'checkbox' || f.type === 'select') {
             input.addEventListener('change', () => {
-                input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }));
+                fireRecursiveDependencyUpdate(f.name);
             });
         }
         else {
             input.addEventListener('input', () => {
-                input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }));
+                fireRecursiveDependencyUpdate(f.name);
             });
         }
         const internals = {
@@ -185,6 +185,7 @@ const Form = (config) => {
         return side;
     };
     const evaluateRule = (rule) => {
+        console.log('EVALUATE RULE');
         if ('==' in rule) {
             const [left, right] = rule['=='];
             return readRuleSide(left) === readRuleSide(right);
@@ -236,6 +237,10 @@ const Form = (config) => {
         return values;
     };
     const form = document.createElement('form');
+    const titleEl = document.createElement('p');
+    titleEl.textContent = config.title?.trim() ?? '';
+    titleEl.style.gridColumn = '1/-1';
+    form.append(titleEl);
     const submitButton = document.createElement('button');
     submitButton.type = 'submit';
     submitButton.textContent = 'Submit';
@@ -246,15 +251,16 @@ const Form = (config) => {
         form.append(fieldInternal.el);
     }
     form.append(buttonRow);
-    form.addEventListener('form-update', (e) => {
-        e.stopPropagation();
-        const fieldInternalThatChanged = e.detail;
-        if (!(WATCHERS[fieldInternalThatChanged.name] instanceof Set))
+    const fireRecursiveDependencyUpdate = (fieldName) => {
+        if (!(WATCHERS[fieldName] instanceof Set))
             return;
-        for (const fieldName of WATCHERS[fieldInternalThatChanged.name]) {
-            FIELDS[fieldName].updateState();
+        for (const watcherName of WATCHERS[fieldName]) {
+            FIELDS[watcherName].updateState();
+            if (WATCHERS[watcherName] instanceof Set) {
+                fireRecursiveDependencyUpdate(watcherName);
+            }
         }
-    });
+    };
     for (const fieldInternal of Object.values(FIELDS)) {
         fieldInternal.updateState();
     }

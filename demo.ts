@@ -1,5 +1,5 @@
 const form = Form({
-    name: '',
+    title: 'Library form',
     fields: [
         // Step 1: Select audience type
         {
@@ -189,6 +189,6 @@ const form = Form({
                 { '==': [{ var: 'audienceType' }, 'child'] },
             ],
         },
-    ], 
+    ],
 });
 document.body.replaceChildren(form.el);

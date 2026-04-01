@@ -62,7 +62,7 @@ type Rule = EqualsRule | NotEqualsRule | LessThanRule | LessThanOrEqualToRule | 
 
 
 type Config = {
-	name: string;
+	title: string;
 	fields: Field[];
 }
 
@@ -156,12 +156,12 @@ const Form = (config: Config) => {
 
 		if (f.type === 'checkbox' || f.type === 'select') {
 			input.addEventListener('change', () => {
-				input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }))
+				fireRecursiveDependencyUpdate(f.name);
 			});
 		}
 		else {
 			input.addEventListener('input', () => {
-				input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }))
+				fireRecursiveDependencyUpdate(f.name);
 			});
 		}
 
@@ -214,7 +214,7 @@ const Form = (config: Config) => {
 	const getFieldNamesToWatch = (field: Field): Set<string> => {
 		const set = new Set<string>();
 
-		const extractVar = (val: unknown) => {
+		const addVarIfExists = (val: unknown) => {
 			if (val && typeof val === 'object' && 'var' in val && typeof val.var === 'string') {
 				set.add(val.var);
 			}
@@ -234,33 +234,33 @@ const Form = (config: Config) => {
 		const walkRule = (rule: Rule) => {
 			if ('==' in rule) {
 				const [left, right] = rule['=='];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('!=' in rule) {
 				const [left, right] = rule['!='];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('>' in rule) {
 				const [left, right] = rule['>'];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('<' in rule) {
 				const [left, right] = rule['<'];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('>=' in rule) {
 				const [left, right] = rule['>='];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('<=' in rule) {
 				const [left, right] = rule['<='];
-				extractVar(left);
-				extractVar(right);
+				addVarIfExists(left);
+				addVarIfExists(right);
 			}
 			else if ('and' in rule) {
 				rule.and.forEach(walkRule);
@@ -284,7 +284,6 @@ const Form = (config: Config) => {
 		walkRulesArray(field.disabled);
 		return set;
 	};
-
 
 	/** 
 	 * Figures out what a property should be based on form values.
@@ -313,7 +312,7 @@ const Form = (config: Config) => {
 	 * A little repetitive, but it's easier to understand doing the operations one by one like this compared to a lookup
 	 * Also needs some type checking, maybe, or else you can do weird things like 'a' < 'aa' etc? */
 	const evaluateRule = (rule: Rule): boolean => {
-
+		console.log('EVALUATE RULE')
 		if ('==' in rule) {
 			const [left, right] = rule['=='];
 			return readRuleSide(left) === readRuleSide(right);
@@ -366,13 +365,16 @@ const Form = (config: Config) => {
 		for (const fieldInternal of Object.values(FIELDS)) {
 			values[fieldInternal.name] = fieldInternal.value;
 		}
-
 		return values;
 	};
 
-
-
 	const form = document.createElement('form');
+
+	const titleEl = document.createElement('p');
+	titleEl.textContent = config.title?.trim() ?? '';
+	titleEl.style.gridColumn = '1/-1';
+
+	form.append(titleEl);
 
 	const submitButton = document.createElement('button');
 	submitButton.type = 'submit';
@@ -388,15 +390,17 @@ const Form = (config: Config) => {
 
 	form.append(buttonRow);
 
-	form.addEventListener('form-update', (e) => {
-		e.stopPropagation();
-		const fieldInternalThatChanged: FieldInternal = (e as CustomEvent).detail;
-		if (!(WATCHERS[fieldInternalThatChanged.name] instanceof Set)) return;
-		for (const fieldName of WATCHERS[fieldInternalThatChanged.name]) {
-			FIELDS[fieldName].updateState();
+	// Could we memoize updated fields to reduce this?
+	/** Update dependent fields, then update fields that were dependent on those, etc. */
+	const fireRecursiveDependencyUpdate = (fieldName: string) => {
+		if (!(WATCHERS[fieldName] instanceof Set)) return;
+		for (const watcherName of WATCHERS[fieldName]) {
+			FIELDS[watcherName].updateState();
+			if (WATCHERS[watcherName] instanceof Set) {
+				fireRecursiveDependencyUpdate(watcherName);
+			}
 		}
-
-	});
+	};
 
 	// Update everything once after creating form
 	for (const fieldInternal of Object.values(FIELDS)) {

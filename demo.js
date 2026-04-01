@@ -1,6 +1,6 @@
 "use strict";
 const form = Form({
-    name: '',
+    title: 'Library form',
     fields: [
         {
             type: 'select',
