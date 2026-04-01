@@ -1,6 +1,7 @@
 "use strict";
 const Form = (config) => {
     const FIELDS = {};
+    const WATCHERS = {};
     const buildField = (f) => {
         const id = `_${crypto.randomUUID()}`;
         const div = document.createElement('div');
@@ -55,6 +56,22 @@ const Form = (config) => {
         if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
             div.style.gridColumn = '1/-1';
         }
+        for (const fieldName of getFieldNamesToWatch(f)) {
+            if (!(WATCHERS[fieldName] instanceof Set)) {
+                WATCHERS[fieldName] = new Set();
+            }
+            WATCHERS[fieldName].add(f.name);
+        }
+        if (f.type === 'checkbox' || f.type === 'select') {
+            input.addEventListener('change', () => {
+                input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }));
+            });
+        }
+        else {
+            input.addEventListener('input', () => {
+                input.dispatchEvent(new CustomEvent('form-update', { bubbles: true, detail: internals }));
+            });
+        }
         const internals = {
             get type() {
                 return f.type;
@@ -63,6 +80,8 @@ const Form = (config) => {
                 return f.name;
             },
             get value() {
+                if (_disabled || !_visible)
+                    return getEmptyValue(this);
                 return getValue();
             },
             get visible() {
@@ -77,10 +96,10 @@ const Form = (config) => {
             get el() {
                 return div;
             },
-            updateState(formValues) {
-                _visible = evaluateProperty(f.visible, formValues, true);
-                _disabled = evaluateProperty(f.disabled, formValues, false);
-                _required = evaluateProperty(f.required, formValues, false);
+            updateState() {
+                _visible = evaluateProperty(f.visible, true);
+                _disabled = evaluateProperty(f.disabled, false);
+                _required = evaluateProperty(f.required, false);
                 if (_visible) {
                     div.style.display = '';
                     input.disabled = false;
@@ -95,45 +114,109 @@ const Form = (config) => {
         FIELDS[f.name] = internals;
         return internals;
     };
-    const evaluateProperty = (propertyVal, formValues, defaultValue) => {
+    const getFieldNamesToWatch = (field) => {
+        const set = new Set();
+        const extractVar = (val) => {
+            if (val && typeof val === 'object' && 'var' in val && typeof val.var === 'string') {
+                set.add(val.var);
+            }
+        };
+        const walkRule = (rule) => {
+            if ('==' in rule) {
+                const [left, right] = rule['=='];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('!=' in rule) {
+                const [left, right] = rule['!='];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('>' in rule) {
+                const [left, right] = rule['>'];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('<' in rule) {
+                const [left, right] = rule['<'];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('>=' in rule) {
+                const [left, right] = rule['>='];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('<=' in rule) {
+                const [left, right] = rule['<='];
+                extractVar(left);
+                extractVar(right);
+            }
+            else if ('and' in rule) {
+                rule.and.forEach(walkRule);
+            }
+            else if ('or' in rule) {
+                rule.or.forEach(walkRule);
+            }
+            else if ('not' in rule) {
+                walkRule(rule.not);
+            }
+        };
+        const walkRulesArray = (rules) => {
+            if (Array.isArray(rules))
+                rules.forEach(walkRule);
+        };
+        walkRulesArray(field.visible);
+        walkRulesArray(field.required);
+        walkRulesArray(field.disabled);
+        return set;
+    };
+    const evaluateProperty = (propertyVal, defaultValue) => {
         if (typeof propertyVal === 'boolean')
             return propertyVal;
         if (Array.isArray(propertyVal))
-            return propertyVal.every(rule => evaluateRule(rule, formValues));
+            return propertyVal.every(rule => evaluateRule(rule));
         return defaultValue;
     };
-    const evaluateRule = (rule, formValues) => {
-        const evaluateSide = (operand) => !!operand && typeof operand === 'object' && 'var' in operand ? formValues[operand.var] : operand;
-        console.log('Evaluated a rule');
+    const readRuleSide = (side) => {
+        if (!!side && typeof side === 'object' && 'var' in side) {
+            return FIELDS[side.var].value;
+        }
+        return side;
+    };
+    const evaluateRule = (rule) => {
         if ('==' in rule) {
             const [left, right] = rule['=='];
-            return evaluateSide(left) === evaluateSide(right);
+            return readRuleSide(left) === readRuleSide(right);
         }
-        else if ('!=' in rule) {
+        if ('!=' in rule) {
             const [left, right] = rule['!='];
-            return evaluateSide(left) !== evaluateSide(right);
+            return readRuleSide(left) !== readRuleSide(right);
         }
-        else if ('>' in rule) {
+        if ('>' in rule) {
             const [left, right] = rule['>'];
-            return evaluateSide(left) > evaluateSide(right);
+            return readRuleSide(left) > readRuleSide(right);
         }
-        else if ('<' in rule) {
+        if ('<' in rule) {
             const [left, right] = rule['<'];
-            return evaluateSide(left) < evaluateSide(right);
+            return readRuleSide(left) < readRuleSide(right);
         }
-        else if ('>=' in rule) {
+        if ('>=' in rule) {
             const [left, right] = rule['>='];
-            return evaluateSide(left) >= evaluateSide(right);
+            return readRuleSide(left) >= readRuleSide(right);
         }
-        else if ('<=' in rule) {
+        if ('<=' in rule) {
             const [left, right] = rule['<='];
-            return evaluateSide(left) <= evaluateSide(right);
+            return readRuleSide(left) <= readRuleSide(right);
         }
-        else if ('and' in rule) {
-            return rule.and.every((r) => evaluateRule(r, formValues));
+        if ('not' in rule) {
+            return !evaluateRule(rule.not);
         }
-        else if ('or' in rule) {
-            return rule.or.some((r) => evaluateRule(r, formValues));
+        if ('and' in rule) {
+            return rule.and.every((r) => evaluateRule(r));
+        }
+        if ('or' in rule) {
+            return rule.or.some((r) => evaluateRule(r));
         }
         return true;
     };
@@ -148,19 +231,9 @@ const Form = (config) => {
     const getFormValues = () => {
         const values = {};
         for (const fieldInternal of Object.values(FIELDS)) {
-            if (fieldInternal.disabled || !fieldInternal.visible) {
-                values[fieldInternal.name] = getEmptyValue(fieldInternal);
-                continue;
-            }
-            values[fieldInternal.name] = fieldInternal.value ?? getEmptyValue(fieldInternal);
+            values[fieldInternal.name] = fieldInternal.value;
         }
         return values;
-    };
-    const updateFormStateForAllFields = () => {
-        const formValues = getFormValues();
-        for (const fieldInternal of Object.values(FIELDS)) {
-            fieldInternal.updateState(formValues);
-        }
     };
     const form = document.createElement('form');
     const submitButton = document.createElement('button');
@@ -173,182 +246,25 @@ const Form = (config) => {
         form.append(fieldInternal.el);
     }
     form.append(buttonRow);
-    form.addEventListener('change', () => {
-        updateFormStateForAllFields();
+    form.addEventListener('form-update', (e) => {
+        e.stopPropagation();
+        const fieldInternalThatChanged = e.detail;
+        if (!(WATCHERS[fieldInternalThatChanged.name] instanceof Set))
+            return;
+        for (const fieldName of WATCHERS[fieldInternalThatChanged.name]) {
+            FIELDS[fieldName].updateState();
+        }
     });
-    form.addEventListener('input', () => {
-        updateFormStateForAllFields();
-    });
-    updateFormStateForAllFields();
+    for (const fieldInternal of Object.values(FIELDS)) {
+        fieldInternal.updateState();
+    }
     return {
         el: form,
         get value() {
             return getFormValues();
-        },
-        set value(value) {
         },
         get formData() {
             return new FormData(form);
         },
     };
 };
-const fields = [
-    {
-        type: 'textbox',
-        name: 'programName',
-        label: 'Program Name',
-        value: '',
-        placeholder: 'Enter program name (Children, Teen, Adult, Tech Help)',
-        maxLength: 50,
-    },
-    {
-        type: 'checkbox',
-        name: 'isYouthProgram',
-        label: 'This registration is for a youth program',
-        value: false,
-    },
-    {
-        type: 'textbox',
-        name: 'participantAge',
-        label: 'Participant Age',
-        value: '',
-        placeholder: 'Enter age',
-        maxLength: 3,
-        visible: [
-            {
-                '==': [{ var: 'isYouthProgram' }, true],
-            },
-        ],
-        required: [
-            {
-                '==': [{ var: 'isYouthProgram' }, true],
-            },
-        ],
-    },
-    {
-        type: 'textbox',
-        name: 'guardianName',
-        label: 'Guardian Name',
-        value: '',
-        placeholder: 'Enter parent or guardian name',
-        visible: [
-            {
-                and: [
-                    { '==': [{ var: 'isYouthProgram' }, true] },
-                    { '<': [{ var: 'participantAge' }, 13] },
-                ],
-            },
-        ],
-        required: [
-            {
-                and: [
-                    { '==': [{ var: 'isYouthProgram' }, true] },
-                    { '<': [{ var: 'participantAge' }, 13] },
-                ],
-            },
-        ],
-    },
-    {
-        type: 'checkbox',
-        name: 'hasLibraryCard',
-        label: 'I already have a library card',
-        value: false,
-    },
-    {
-        type: 'textbox',
-        name: 'libraryCardNumber',
-        label: 'Library Card Number',
-        value: '',
-        placeholder: 'Enter card number',
-        maxLength: 20,
-        visible: [
-            {
-                '==': [{ var: 'hasLibraryCard' }, true],
-            },
-        ],
-        required: [
-            {
-                '==': [{ var: 'hasLibraryCard' }, true],
-            },
-        ],
-    },
-    {
-        type: 'checkbox',
-        name: 'needsAccommodation',
-        label: 'Request accessibility accommodations',
-        value: false,
-    },
-    {
-        type: 'textbox',
-        name: 'accommodationDetails',
-        label: 'Accommodation Details',
-        value: '',
-        placeholder: 'Describe requested accommodations',
-        maxLength: 200,
-        visible: [
-            {
-                '==': [{ var: 'needsAccommodation' }, true],
-            },
-        ],
-        required: [
-            {
-                '==': [{ var: 'needsAccommodation' }, true],
-            },
-        ],
-    },
-    {
-        type: 'checkbox',
-        name: 'requestReminder',
-        label: 'Send me a reminder before the program',
-        value: false,
-    },
-    {
-        type: 'textbox',
-        name: 'email',
-        label: 'Email Address',
-        value: '',
-        placeholder: 'Enter email address',
-        maxLength: 100,
-        required: [
-            {
-                or: [
-                    { '==': [{ var: 'requestReminder' }, true] },
-                    { '==': [{ var: 'needsAccommodation' }, true] },
-                ],
-            },
-        ],
-    },
-    {
-        type: 'textbox',
-        name: 'pickupBranch',
-        label: 'Preferred Branch for Materials Pickup',
-        value: '',
-        placeholder: 'Enter branch name',
-        disabled: [
-            {
-                or: [
-                    { '==': [{ var: 'hasLibraryCard' }, false] },
-                    { '==': [{ var: 'requestReminder' }, false] },
-                ],
-            },
-        ],
-    },
-    {
-        type: 'select',
-        name: 'favoriteGenre',
-        label: 'Favorite Book Genre',
-        value: '',
-        options: [
-            { text: 'Fiction', value: 'fiction' },
-            { text: 'Non-Fiction', value: 'nonfiction' },
-            { text: 'Mystery', value: 'mystery' },
-            { text: 'Science Fiction', value: 'scifi' },
-            { text: 'Biography', value: 'biography' },
-        ],
-        placeholder: 'Select a genre',
-        required: true,
-        visible: true
-    },
-];
-const form = Form({ fields, name: 'test' });
-document.body.replaceChildren(form.el);
