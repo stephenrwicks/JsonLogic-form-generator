@@ -13,6 +13,7 @@ const form = Form({
                 { text: 'Child', value: 'child' },
             ],
             placeholder: 'Select an option',
+            required: true,
         },
         {
             type: 'textbox',
@@ -172,6 +173,7 @@ const form = Form({
             name: 'childRoomAccess',
             label: 'Access to Children\'s Room?',
             value: false,
+            required: false,
             visible: [
                 { '==': [{ var: 'audienceType' }, 'child'] },
             ],

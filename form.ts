@@ -10,6 +10,7 @@ type FieldBase = {
 	visible?: Rule[] | boolean;
 	required?: Rule[] | boolean;
 	disabled?: Rule[] | boolean;
+	valid?: Rule[];
 };
 
 type Textbox = FieldBase & {
@@ -68,35 +69,39 @@ type Config = {
 
 const Form = (config: Config) => {
 
-	type FieldInternal = Readonly<{
-		type: FieldBase['type'];
-		el: HTMLDivElement;
-		name: string;
-		visible: boolean;
-		required: boolean;
-		disabled: boolean;
+	const keys = ['==', '!=', '<', '<=', '>', '>=', 'and', 'or', 'not'];
+
+	type FieldInternal = {
+		readonly type: FieldBase['type'];
+		readonly el: HTMLDivElement;
+		readonly name: string;
+		readonly visible: boolean;
+		readonly required: boolean;
+		readonly disabled: boolean;
 		value: unknown;
 		updateState(): void;
-	}>;
+	};
 
+	// field name => internal object
 	const FIELDS: Record<string, FieldInternal> = {};
 	// field name => subscriber names
 	const WATCHERS: Record<string, Set<string>> = {};
-	//const RULEPROPERTIES = ['visible', 'required', 'disabled'];
 
 	const buildField = (f: Field) => {
 		const id = `_${crypto.randomUUID()}`;
 		const div = document.createElement('div');
 		const label = document.createElement('label');
-		// const labelSpan = document.createElement('span');
-		// const requiredSpan = document.createElement('span');
+		const labelSpan = document.createElement('span');
+		const requiredSpan = document.createElement('span');
 		label.htmlFor = id;
-		// labelSpan.textContent = f.label;
-		// requiredSpan.textContent = ' *';
-		// requiredSpan.ariaHidden = 'true';
-		//label.replaceChildren(labelSpan, requiredSpan);
+		labelSpan.textContent = f.label;
+		requiredSpan.textContent = ' *';
+		requiredSpan.style.color = 'red';
+		requiredSpan.ariaHidden = 'true';
+		label.replaceChildren(labelSpan, requiredSpan);
 		let input: HTMLInputElement | HTMLSelectElement;
 		let getValue: () => unknown;
+		let setValue: (val: any) => any;
 
 		if (f.type === 'checkbox') {
 			input = document.createElement('input');
@@ -104,10 +109,14 @@ const Form = (config: Config) => {
 			input.name = f.name;
 			input.type = 'checkbox';
 			input.checked = !!f.value;
-			label.replaceChildren(input, f.label);
+			const wrapperSpan = document.createElement('span');
+			wrapperSpan.replaceChildren(labelSpan, requiredSpan);
+			label.replaceChildren(input, wrapperSpan);
+			label.style.display = 'flex';
 			div.replaceChildren(label);
 			div.style.alignContent = 'end';
 			getValue = () => !!(input as HTMLInputElement).checked;
+			setValue = (val) => (input as HTMLInputElement).checked = !!val;
 		}
 		else if (f.type === 'textbox') {
 			input = document.createElement('input');
@@ -118,21 +127,23 @@ const Form = (config: Config) => {
 			input.placeholder = f.placeholder ?? '';
 			if (typeof f.maxLength === 'number') input.maxLength = f.maxLength;
 			if (typeof f.minLength === 'number') input.minLength = f.minLength;
-			label.textContent = f.label;
 			div.replaceChildren(label, input);
 			getValue = () => input.value.trim();
+			setValue = (val: string) => input.value = val?.trim() || '';
 		}
 		else if (f.type === 'select') {
 			input = document.createElement('select');
 			input.id = id;
 			input.name = f.name;
-			label.textContent = f.label;
 			input.add(new Option(f.placeholder || '-', '', false));
 			for (const option of f.options) {
 				input.add(new Option(option.text, option.value, option.value === f.value));
 			}
 			div.replaceChildren(label, input);
-			getValue = () => input.value;
+
+			const validValues = new Set(f.options.map(o => o.value));
+			getValue = () => validValues.has(input.value) ? input.value : '';
+			setValue = (val: string) => input.value = validValues.has(val) ? val : '';
 		}
 		else {
 			throw new Error(`field ${(f as Field).name} type invalid`);
@@ -144,7 +155,7 @@ const Form = (config: Config) => {
 
 		// Stretch across entire grid if it's conditionally displayed. Otherwise, you get fields moving around left/right
 		if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
-			div.style.gridColumn = '1/-1';
+			//div.style.gridColumn = '1/-1';
 		}
 
 		for (const fieldName of getFieldNamesToWatch(f)) {
@@ -177,6 +188,10 @@ const Form = (config: Config) => {
 				if (_disabled || !_visible) return getEmptyValue(this);
 				return getValue();
 			},
+			set value(val: any) {
+				setValue(val);
+				fireRecursiveDependencyUpdate(f.name);
+			},
 			get visible() {
 				return _visible;
 			},
@@ -200,7 +215,7 @@ const Form = (config: Config) => {
 				else {
 					div.style.display = 'none';
 				}
-
+				requiredSpan.style.display = _required ? '' : 'none';
 				input.required = _required;
 				input.disabled = _disabled || !_visible;
 			}
@@ -211,27 +226,25 @@ const Form = (config: Config) => {
 		return internals;
 	};
 
+
+	// To implement contextual rules that compare against current day, etc., will need custom operators with context:
+	// const context = {
+	//   today: new Date(),
+	//   // etc.
+	// };
+	// then compare against that
+
+	/** Repetitive loop to return a set of strings. Can probably be simplified if I look up by key */
 	const getFieldNamesToWatch = (field: Field): Set<string> => {
-		const set = new Set<string>();
+		const resultSet = new Set<string>();
 
 		const addVarIfExists = (val: unknown) => {
 			if (val && typeof val === 'object' && 'var' in val && typeof val.var === 'string') {
-				set.add(val.var);
+				resultSet.add(val.var);
 			}
 		};
 
-		// For each rule, we are checking both left and right for "var",
-		// which allows us to do comparisons between fields, and not just static values.
-		// e.g., is field A less than field B? etc.
-		// To implement contextual rules that compare against current day, etc., will need custom operators with context:
-		// const context = {
-		//   today: new Date(),
-		//   // etc.
-		// };
-		// then compare against that
-
-		// This needs to reuse readRuleSide so we should fine a good middle ground
-		const walkRule = (rule: Rule) => {
+		const collectVars = (rule: Rule) => {
 			if ('==' in rule) {
 				const [left, right] = rule['=='];
 				addVarIfExists(left);
@@ -262,27 +275,33 @@ const Form = (config: Config) => {
 				addVarIfExists(left);
 				addVarIfExists(right);
 			}
+			else if ('not' in rule) {
+				collectVars(rule.not);
+			}
 			else if ('and' in rule) {
-				rule.and.forEach(walkRule);
+				for (const r of rule.and) {
+					collectVars(r);
+				}
 			}
 			else if ('or' in rule) {
-				rule.or.forEach(walkRule);
+				for (const r of rule.or) {
+					collectVars(r);
+				}
 			}
-			else if ('not' in rule) {
-				walkRule(rule.not);
-			}
-
-
 		};
 
-		const walkRulesArray = (rules: Rule[] | boolean | undefined) => {
-			if (Array.isArray(rules)) rules.forEach(walkRule);
+		const collectAllVarNames = (rules: Rule[] | boolean | undefined) => {
+			if (!Array.isArray(rules)) return;
+			for (const r of rules) {
+				collectVars(r);
+			}
 		};
 
-		walkRulesArray(field.visible);
-		walkRulesArray(field.required);
-		walkRulesArray(field.disabled);
-		return set;
+		collectAllVarNames(field.visible);
+		collectAllVarNames(field.required);
+		collectAllVarNames(field.disabled);
+
+		return resultSet;
 	};
 
 	/** 
@@ -311,8 +330,7 @@ const Form = (config: Config) => {
 	/** Makes a rule comparison: field value against a set value. 
 	 * A little repetitive, but it's easier to understand doing the operations one by one like this compared to a lookup
 	 * Also needs some type checking, maybe, or else you can do weird things like 'a' < 'aa' etc? */
-	const evaluateRule = (rule: Rule): boolean => {
-		console.log('EVALUATE RULE')
+	const evaluateRule = (rule: Rule, thingToDo: 'evaluate' | 'getDependencies' = 'evaluate'): boolean => {
 		if ('==' in rule) {
 			const [left, right] = rule['=='];
 			return readRuleSide(left) === readRuleSide(right);
@@ -338,15 +356,17 @@ const Form = (config: Config) => {
 			return readRuleSide(left) <= readRuleSide(right);
 		}
 		if ('not' in rule) {
-			// To check a negative rule we just return the inverse
 			// A not rule looks like { not: { '==': [{ var: 'fieldName' }, 'fieldValue'] } }
-			return !evaluateRule(rule.not);
+			// True if it returns false
+			return evaluateRule(rule.not) === false;
 		}
 		// These are collections of other rules, so we use recursion here
 		if ('and' in rule) {
+			// Everything has to return true
 			return rule.and.every((r) => evaluateRule(r));
 		}
 		if ('or' in rule) {
+			// True if one returns true
 			return rule.or.some((r) => evaluateRule(r));
 		}
 
@@ -359,14 +379,14 @@ const Form = (config: Config) => {
 		if (type === 'integer') return 0;
 	};
 
-	const getFormValues = () => {
-		// // Get this on every change => evaluate rules for every input by cycling through map => use internal setters to change status => update dom
-		const values: Record<string, unknown> = {};
-		for (const fieldInternal of Object.values(FIELDS)) {
-			values[fieldInternal.name] = fieldInternal.value;
-		}
-		return values;
-	};
+	// const getFormValues = () => {
+	// 	// // Get this on every change => evaluate rules for every input by cycling through map => use internal setters to change status => update dom
+	// 	const values: Record<string, unknown> = {};
+	// 	for (const fieldInternal of Object.values(FIELDS)) {
+	// 		values[fieldInternal.name] = fieldInternal.value;
+	// 	}
+	// 	return values;
+	// };
 
 	const form = document.createElement('form');
 
@@ -383,15 +403,26 @@ const Form = (config: Config) => {
 	const buttonRow = document.createElement('div');
 	buttonRow.replaceChildren(submitButton);
 
+	// use create null so you have no prototype properties in the way.
+	const valueObject = Object.create(null);
 	for (const f of config.fields) {
 		const fieldInternal = buildField(f);
+		// Several layers of getter/setters here, probably one can be removed
+		Object.defineProperty(valueObject, f.name, {
+			get() {
+				return fieldInternal.value;
+			},
+			set(value: any) {
+				fieldInternal.value = value;
+			},
+			enumerable: true,
+		});
 		form.append(fieldInternal.el);
 	}
 
 	form.append(buttonRow);
 
-	// Could we memoize updated fields to reduce this?
-	/** Update dependent fields, then update fields that were dependent on those, etc. */
+	/** Update dependent fields, then update fields that are dependent on those, etc. */
 	const fireRecursiveDependencyUpdate = (fieldName: string) => {
 		if (!(WATCHERS[fieldName] instanceof Set)) return;
 		for (const watcherName of WATCHERS[fieldName]) {
@@ -407,10 +438,14 @@ const Form = (config: Config) => {
 		fieldInternal.updateState();
 	}
 
+
 	return {
 		el: form,
 		get value() {
-			return getFormValues();
+			return valueObject;
+		},
+		get json() {
+			return JSON.stringify(valueObject);
 		},
 		get formData() {
 			return new FormData(form);

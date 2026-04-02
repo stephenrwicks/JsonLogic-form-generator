@@ -1,24 +1,37 @@
 "use strict";
 const Form = (config) => {
+    const keys = ['==', '!=', '<', '<=', '>', '>=', 'and', 'or', 'not'];
     const FIELDS = {};
     const WATCHERS = {};
     const buildField = (f) => {
         const id = `_${crypto.randomUUID()}`;
         const div = document.createElement('div');
         const label = document.createElement('label');
+        const labelSpan = document.createElement('span');
+        const requiredSpan = document.createElement('span');
         label.htmlFor = id;
+        labelSpan.textContent = f.label;
+        requiredSpan.textContent = ' *';
+        requiredSpan.style.color = 'red';
+        requiredSpan.ariaHidden = 'true';
+        label.replaceChildren(labelSpan, requiredSpan);
         let input;
         let getValue;
+        let setValue;
         if (f.type === 'checkbox') {
             input = document.createElement('input');
             input.id = id;
             input.name = f.name;
             input.type = 'checkbox';
             input.checked = !!f.value;
-            label.replaceChildren(input, f.label);
+            const wrapperSpan = document.createElement('span');
+            wrapperSpan.replaceChildren(labelSpan, requiredSpan);
+            label.replaceChildren(input, wrapperSpan);
+            label.style.display = 'flex';
             div.replaceChildren(label);
             div.style.alignContent = 'end';
             getValue = () => !!input.checked;
+            setValue = (val) => input.checked = !!val;
         }
         else if (f.type === 'textbox') {
             input = document.createElement('input');
@@ -31,21 +44,22 @@ const Form = (config) => {
                 input.maxLength = f.maxLength;
             if (typeof f.minLength === 'number')
                 input.minLength = f.minLength;
-            label.textContent = f.label;
             div.replaceChildren(label, input);
             getValue = () => input.value.trim();
+            setValue = (val) => input.value = val?.trim() || '';
         }
         else if (f.type === 'select') {
             input = document.createElement('select');
             input.id = id;
             input.name = f.name;
-            label.textContent = f.label;
             input.add(new Option(f.placeholder || '-', '', false));
             for (const option of f.options) {
                 input.add(new Option(option.text, option.value, option.value === f.value));
             }
             div.replaceChildren(label, input);
-            getValue = () => input.value;
+            const validValues = new Set(f.options.map(o => o.value));
+            getValue = () => validValues.has(input.value) ? input.value : '';
+            setValue = (val) => input.value = validValues.has(val) ? val : '';
         }
         else {
             throw new Error(`field ${f.name} type invalid`);
@@ -54,7 +68,6 @@ const Form = (config) => {
         let _disabled = false;
         let _required = false;
         if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
-            div.style.gridColumn = '1/-1';
         }
         for (const fieldName of getFieldNamesToWatch(f)) {
             if (!(WATCHERS[fieldName] instanceof Set)) {
@@ -84,6 +97,10 @@ const Form = (config) => {
                     return getEmptyValue(this);
                 return getValue();
             },
+            set value(val) {
+                setValue(val);
+                fireRecursiveDependencyUpdate(f.name);
+            },
             get visible() {
                 return _visible;
             },
@@ -107,6 +124,7 @@ const Form = (config) => {
                 else {
                     div.style.display = 'none';
                 }
+                requiredSpan.style.display = _required ? '' : 'none';
                 input.required = _required;
                 input.disabled = _disabled || !_visible;
             }
@@ -115,13 +133,13 @@ const Form = (config) => {
         return internals;
     };
     const getFieldNamesToWatch = (field) => {
-        const set = new Set();
+        const resultSet = new Set();
         const addVarIfExists = (val) => {
             if (val && typeof val === 'object' && 'var' in val && typeof val.var === 'string') {
-                set.add(val.var);
+                resultSet.add(val.var);
             }
         };
-        const walkRule = (rule) => {
+        const collectVars = (rule) => {
             if ('==' in rule) {
                 const [left, right] = rule['=='];
                 addVarIfExists(left);
@@ -152,24 +170,31 @@ const Form = (config) => {
                 addVarIfExists(left);
                 addVarIfExists(right);
             }
+            else if ('not' in rule) {
+                collectVars(rule.not);
+            }
             else if ('and' in rule) {
-                rule.and.forEach(walkRule);
+                for (const r of rule.and) {
+                    collectVars(r);
+                }
             }
             else if ('or' in rule) {
-                rule.or.forEach(walkRule);
-            }
-            else if ('not' in rule) {
-                walkRule(rule.not);
+                for (const r of rule.or) {
+                    collectVars(r);
+                }
             }
         };
-        const walkRulesArray = (rules) => {
-            if (Array.isArray(rules))
-                rules.forEach(walkRule);
+        const collectAllVarNames = (rules) => {
+            if (!Array.isArray(rules))
+                return;
+            for (const r of rules) {
+                collectVars(r);
+            }
         };
-        walkRulesArray(field.visible);
-        walkRulesArray(field.required);
-        walkRulesArray(field.disabled);
-        return set;
+        collectAllVarNames(field.visible);
+        collectAllVarNames(field.required);
+        collectAllVarNames(field.disabled);
+        return resultSet;
     };
     const evaluateProperty = (propertyVal, defaultValue) => {
         if (typeof propertyVal === 'boolean')
@@ -184,8 +209,7 @@ const Form = (config) => {
         }
         return side;
     };
-    const evaluateRule = (rule) => {
-        console.log('EVALUATE RULE');
+    const evaluateRule = (rule, thingToDo = 'evaluate') => {
         if ('==' in rule) {
             const [left, right] = rule['=='];
             return readRuleSide(left) === readRuleSide(right);
@@ -211,7 +235,7 @@ const Form = (config) => {
             return readRuleSide(left) <= readRuleSide(right);
         }
         if ('not' in rule) {
-            return !evaluateRule(rule.not);
+            return evaluateRule(rule.not) === false;
         }
         if ('and' in rule) {
             return rule.and.every((r) => evaluateRule(r));
@@ -229,13 +253,6 @@ const Form = (config) => {
         if (type === 'integer')
             return 0;
     };
-    const getFormValues = () => {
-        const values = {};
-        for (const fieldInternal of Object.values(FIELDS)) {
-            values[fieldInternal.name] = fieldInternal.value;
-        }
-        return values;
-    };
     const form = document.createElement('form');
     const titleEl = document.createElement('p');
     titleEl.textContent = config.title?.trim() ?? '';
@@ -246,8 +263,18 @@ const Form = (config) => {
     submitButton.textContent = 'Submit';
     const buttonRow = document.createElement('div');
     buttonRow.replaceChildren(submitButton);
+    const valueObject = Object.create(null);
     for (const f of config.fields) {
         const fieldInternal = buildField(f);
+        Object.defineProperty(valueObject, f.name, {
+            get() {
+                return fieldInternal.value;
+            },
+            set(value) {
+                fieldInternal.value = value;
+            },
+            enumerable: true,
+        });
         form.append(fieldInternal.el);
     }
     form.append(buttonRow);
@@ -267,7 +294,10 @@ const Form = (config) => {
     return {
         el: form,
         get value() {
-            return getFormValues();
+            return valueObject;
+        },
+        get json() {
+            return JSON.stringify(valueObject);
         },
         get formData() {
             return new FormData(form);
