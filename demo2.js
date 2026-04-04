@@ -3,16 +3,15 @@ const demo = Form({
     title: 'Regional Library Consortium Enrollment',
     fields: [
         {
-            type: 'select',
+            type: 'radiogroup',
             name: 'membershipType',
             label: 'Membership Type',
-            value: '',
+            value: 'institutional',
             options: [
                 { text: 'Resident', value: 'resident' },
                 { text: 'Non-Resident', value: 'nonresident' },
                 { text: 'Institutional', value: 'institutional' },
             ],
-            placeholder: 'Choose membership type',
             required: true,
         },
         {
@@ -57,7 +56,6 @@ const demo = Form({
                 {
                     and: [
                         { '==': [{ var: 'membershipType' }, 'resident'] },
-                        { '!=': [{ var: 'residentName' }, ''] },
                     ],
                 },
             ],
@@ -125,10 +123,10 @@ const demo = Form({
             ],
         },
         {
-            type: 'select',
+            type: 'checkboxgroup',
             name: 'softwareChoice',
-            label: 'Software Package',
-            value: '',
+            label: 'Software Packages',
+            value: [],
             options: [
                 { text: 'VS Code', value: 'vscode' },
                 { text: 'Python Suite', value: 'python' },

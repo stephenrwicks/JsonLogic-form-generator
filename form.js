@@ -4,13 +4,15 @@ const Form = (config) => {
     const FIELDS = {};
     const WATCHERS = {};
     const buildField = (f) => {
+        if (f.name in FIELDS)
+            throw new Error(`"${f.name}" exists in the config twice. Can't have two fields named the same.`);
         const id = `_${crypto.randomUUID()}`;
         const div = document.createElement('div');
         const label = document.createElement('label');
         const labelSpan = document.createElement('span');
         const requiredSpan = document.createElement('span');
         label.htmlFor = id;
-        labelSpan.textContent = f.label;
+        labelSpan.textContent = f.label.trim();
         requiredSpan.textContent = ' *';
         requiredSpan.style.color = 'red';
         requiredSpan.ariaHidden = 'true';
@@ -18,22 +20,8 @@ const Form = (config) => {
         let input;
         let getValue;
         let setValue;
-        if (f.type === 'checkbox') {
-            input = document.createElement('input');
-            input.id = id;
-            input.name = f.name;
-            input.type = 'checkbox';
-            input.checked = !!f.value;
-            const wrapperSpan = document.createElement('span');
-            wrapperSpan.replaceChildren(labelSpan, requiredSpan);
-            label.replaceChildren(input, wrapperSpan);
-            label.style.display = 'flex';
-            div.replaceChildren(label);
-            div.style.alignContent = 'end';
-            getValue = () => !!input.checked;
-            setValue = (val) => input.checked = !!val;
-        }
-        else if (f.type === 'textbox') {
+        let setRequired;
+        if (f.type === 'textbox') {
             input = document.createElement('input');
             input.id = id;
             input.name = f.name;
@@ -47,6 +35,40 @@ const Form = (config) => {
             div.replaceChildren(label, input);
             getValue = () => input.value.trim();
             setValue = (val) => input.value = val?.trim() || '';
+            setRequired = (bool) => input.required = !!bool;
+        }
+        else if (f.type === 'checkbox') {
+            input = document.createElement('input');
+            input.id = id;
+            input.name = f.name;
+            input.type = 'checkbox';
+            input.checked = !!f.value;
+            const wrapperSpan = document.createElement('span');
+            wrapperSpan.replaceChildren(labelSpan, requiredSpan);
+            label.replaceChildren(input, wrapperSpan);
+            label.style.display = 'flex';
+            div.replaceChildren(label);
+            div.style.alignContent = 'end';
+            getValue = () => !!input.checked;
+            setValue = (val) => input.checked = !!val;
+            setRequired = (bool) => input.required = !!bool;
+        }
+        else if (f.type === 'integer' || f.type === 'decimal') {
+            input = document.createElement('input');
+            input.id = id;
+            input.name = f.name;
+            input.type = 'number';
+            input.placeholder = f.placeholder ?? '';
+            if (typeof f.max === 'number') {
+                input.max = String(Math.floor(f.max));
+                input.maxLength = input.max.length;
+            }
+            if (typeof f.min === 'number') {
+                input.min = String(Math.floor(f.min));
+                if (f.min > 0)
+                    input.minLength = input.min.length;
+            }
+            setRequired = (bool) => input.required = !!bool;
         }
         else if (f.type === 'select') {
             input = document.createElement('select');
@@ -60,6 +82,79 @@ const Form = (config) => {
             const validValues = new Set(f.options.map(o => o.value));
             getValue = () => validValues.has(input.value) ? input.value : '';
             setValue = (val) => input.value = validValues.has(val) ? val : '';
+            setRequired = (bool) => input.required = !!bool;
+        }
+        else if (f.type === 'checkboxgroup') {
+            const validValues = new Set(f.options.map(o => o.value));
+            const selectedValues = new Set(f.value ?? []);
+            input = document.createElement('fieldset');
+            input.id = id;
+            const legend = document.createElement('legend');
+            const requiredSpan = document.createElement('span');
+            requiredSpan.textContent = ' *';
+            requiredSpan.style.color = 'red';
+            requiredSpan.ariaHidden = 'true';
+            legend.replaceChildren(f.label.trim(), requiredSpan);
+            input.append(legend);
+            div.replaceChildren(input);
+            const checkboxes = f.options.map(o => {
+                const checkbox = document.createElement('input');
+                const label = document.createElement('label');
+                label.replaceChildren(checkbox, o.text);
+                checkbox.type = 'checkbox';
+                checkbox.name = f.name;
+                checkbox.value = o.value;
+                checkbox.checked = selectedValues.has(o.value);
+                input.append(label);
+                return checkbox;
+            });
+            getValue = () => checkboxes.filter(c => c.checked && validValues.has(c.value)).map(c => c.value);
+            setValue = (val = []) => {
+                const set = new Set(val.filter(v => validValues.has(v)));
+                for (const checkbox of checkboxes) {
+                    checkbox.checked = set.has(checkbox.value);
+                }
+            };
+            setRequired = (bool) => {
+                for (const checkbox of checkboxes) {
+                    checkbox.required = !!bool;
+                }
+            };
+        }
+        else if (f.type === 'radiogroup') {
+            const validValues = new Set(f.options.map(o => o.value));
+            input = document.createElement('fieldset');
+            input.id = id;
+            const legend = document.createElement('legend');
+            const requiredSpan = document.createElement('span');
+            requiredSpan.textContent = ' *';
+            requiredSpan.style.color = 'red';
+            requiredSpan.ariaHidden = 'true';
+            legend.replaceChildren(f.label.trim(), requiredSpan);
+            input.append(legend);
+            div.replaceChildren(input);
+            const radios = f.options.map(o => {
+                const radio = document.createElement('input');
+                const label = document.createElement('label');
+                label.replaceChildren(radio, o.text);
+                radio.type = 'radio';
+                radio.name = f.name;
+                radio.value = o.value;
+                radio.checked = o.value === f.value;
+                input.append(label);
+                return radio;
+            });
+            getValue = () => radios.find(r => r.checked && validValues.has(r.value))?.value ?? '';
+            setValue = (val) => {
+                for (const radio of radios) {
+                    radio.checked = val === radio.value;
+                }
+            };
+            setRequired = (bool) => {
+                for (const radio of radios) {
+                    radio.required = !!bool;
+                }
+            };
         }
         else {
             throw new Error(`field ${f.name} type invalid`);
@@ -75,16 +170,13 @@ const Form = (config) => {
             }
             WATCHERS[fieldName].add(f.name);
         }
-        if (f.type === 'checkbox' || f.type === 'select') {
-            input.addEventListener('change', () => {
-                fireRecursiveDependencyUpdate(f.name);
-            });
+        let eventToListenFor = 'change';
+        if (f.type === 'textbox' || f.type === 'integer' || f.type === 'decimal') {
+            eventToListenFor = 'input';
         }
-        else {
-            input.addEventListener('input', () => {
-                fireRecursiveDependencyUpdate(f.name);
-            });
-        }
+        input.addEventListener(eventToListenFor, () => {
+            fireRecursiveDependencyUpdate(f.name);
+        });
         const internals = {
             get type() {
                 return f.type;
@@ -125,63 +217,59 @@ const Form = (config) => {
                     div.style.display = 'none';
                 }
                 requiredSpan.style.display = _required ? '' : 'none';
-                input.required = _required;
+                setRequired(_required);
                 input.disabled = _disabled || !_visible;
             }
         };
         FIELDS[f.name] = internals;
         return internals;
     };
+    const isVarRef = (val) => {
+        return (!!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string');
+    };
     const getFieldNamesToWatch = (field) => {
         const resultSet = new Set();
-        const addVarIfExists = (val) => {
-            if (val && typeof val === 'object' && 'var' in val && typeof val.var === 'string') {
-                resultSet.add(val.var);
-            }
-        };
         const collectVars = (rule) => {
             if ('==' in rule) {
-                const [left, right] = rule['=='];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['=='])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('!=' in rule) {
-                const [left, right] = rule['!='];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['!='])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('>' in rule) {
-                const [left, right] = rule['>'];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['>'])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('<' in rule) {
-                const [left, right] = rule['<'];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['<'])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('>=' in rule) {
-                const [left, right] = rule['>='];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['>='])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('<=' in rule) {
-                const [left, right] = rule['<='];
-                addVarIfExists(left);
-                addVarIfExists(right);
+                for (const item of rule['<='])
+                    if (isVarRef(item))
+                        resultSet.add(item.var);
             }
             else if ('not' in rule) {
                 collectVars(rule.not);
             }
             else if ('and' in rule) {
-                for (const r of rule.and) {
+                for (const r of rule.and)
                     collectVars(r);
-                }
             }
             else if ('or' in rule) {
-                for (const r of rule.or) {
+                for (const r of rule.or)
                     collectVars(r);
-                }
             }
         };
         const collectAllVarNames = (rules) => {
@@ -204,12 +292,12 @@ const Form = (config) => {
         return defaultValue;
     };
     const readRuleSide = (side) => {
-        if (!!side && typeof side === 'object' && 'var' in side) {
+        if (isVarRef(side)) {
             return FIELDS[side.var].value;
         }
         return side;
     };
-    const evaluateRule = (rule, thingToDo = 'evaluate') => {
+    const evaluateRule = (rule) => {
         if ('==' in rule) {
             const [left, right] = rule['=='];
             return readRuleSide(left) === readRuleSide(right);
@@ -248,10 +336,12 @@ const Form = (config) => {
     const getEmptyValue = ({ type }) => {
         if (type === 'checkbox')
             return false;
-        if (type === 'textbox' || type === 'select')
+        if (type === 'textbox' || type === 'select' || type === 'radiogroup')
             return '';
-        if (type === 'integer')
+        if (type === 'integer' || type === 'decimal')
             return 0;
+        if (type === 'checkboxgroup')
+            return [];
     };
     const form = document.createElement('form');
     const titleEl = document.createElement('p');
@@ -291,6 +381,7 @@ const Form = (config) => {
     for (const fieldInternal of Object.values(FIELDS)) {
         fieldInternal.updateState();
     }
+    const states = {};
     return {
         el: form,
         get value() {
@@ -302,5 +393,19 @@ const Form = (config) => {
         get formData() {
             return new FormData(form);
         },
+        saveState(name) {
+            const clone = structuredClone(valueObject);
+            states[name] = clone;
+            return clone;
+        },
+        loadState(name) {
+            const value = states[name];
+            if (!value)
+                return;
+            for (const key in value) {
+                FIELDS[key].value = value[key];
+            }
+            return structuredClone(value);
+        }
     };
 };

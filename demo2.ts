@@ -5,16 +5,16 @@ const demo = Form({
         // Root identity
         // --------------------
         {
-            type: 'select',
+            type: 'radiogroup',
             name: 'membershipType',
             label: 'Membership Type',
-            value: '',
+            value: 'institutional',
             options: [
                 { text: 'Resident', value: 'resident' },
                 { text: 'Non-Resident', value: 'nonresident' },
                 { text: 'Institutional', value: 'institutional' },
             ],
-            placeholder: 'Choose membership type',
+           // placeholder: 'Choose membership type',
             required: true,
         },
 
@@ -66,7 +66,6 @@ const demo = Form({
                 {
                     and: [
                         { '==': [{ var: 'membershipType' }, 'resident'] },
-                        { '!=': [{ var: 'residentName' }, ''] },
                     ],
                 },
             ],
@@ -138,17 +137,17 @@ const demo = Form({
                 {
                     and: [
                         { '==': [{ var: 'techNeedsLaptop' }, true] },
-                        { '!=': [{ var: 'techLaptopDuration' }, '' ] },
+                        { '!=': [{ var: 'techLaptopDuration' }, ''] },
                     ],
                 },
             ],
         },
 
         {
-            type: 'select',
+            type: 'checkboxgroup',
             name: 'softwareChoice',
-            label: 'Software Package',
-            value: '',
+            label: 'Software Packages',
+            value: [],
             options: [
                 { text: 'VS Code', value: 'vscode' },
                 { text: 'Python Suite', value: 'python' },
@@ -362,7 +361,7 @@ const demo = Form({
                 {
                     and: [
                         { '==': [{ var: 'membershipType' }, 'institutional'] },
-                        { '!=': [{ var: 'institutionSize' }, '' ] },
+                        { '!=': [{ var: 'institutionSize' }, ''] },
                     ],
                 },
             ],
@@ -390,7 +389,7 @@ const demo = Form({
                 {
                     and: [
                         { '==': [{ var: 'institutionNeedsBulkCards' }, true] },
-                        { '!=': [{ var: 'bulkCardCount' }, '' ] },
+                        { '!=': [{ var: 'bulkCardCount' }, ''] },
                     ],
                 },
             ],
