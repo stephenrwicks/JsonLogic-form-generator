@@ -56,10 +56,59 @@ const demo = Form({
         },
 
         {
+            type: 'checkboxgroup',
+            name: 'primarySkills',
+            label: 'Primary Skills',
+            value: [],
+            options: [
+                { text: 'JavaScript', value: 'js' },
+                { text: 'TypeScript', value: 'ts' },
+                { text: 'CSS', value: 'css' },
+            ],
+        },
+
+        {
+            type: 'checkboxgroup',
+            name: 'secondarySkills',
+            label: 'Secondary Skills',
+            value: [],
+            options: [
+                { text: 'JavaScript', value: 'js' },
+                { text: 'TypeScript', value: 'ts' },
+                { text: 'CSS', value: 'css' },
+            ],
+        },
+
+        {
+            type: 'textarea',
+            name: 'skillMatchNote',
+            label: 'Why are both skill selections identical?',
+            value: '',
+            visible: [
+                {
+                    and: [
+                        {
+                            '==': [
+                                { var: 'primarySkills' },
+                                { var: 'secondarySkills' },
+                            ],
+                        },
+                        {
+                            '!=': [
+                                { var: 'primarySkills' },
+                                [],
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+
+        {
             type: 'integer',
             name: 'yearsExperience',
             label: 'Years of Experience',
-            value: 0,
+            value: 2,
             min: 0,
             max: 20,
         },

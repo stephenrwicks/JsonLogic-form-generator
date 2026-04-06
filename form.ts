@@ -3,10 +3,8 @@ type Field = Textbox | Textarea | Checkbox | Select | NumericTextbox | Integer |
 
 type FieldBase = {
 	type: 'textbox' | 'textarea' | 'checkbox' | 'select' | 'numerictextbox' | 'integer' | 'decimal' | 'checkboxgroup' | 'radiogroup';
-	name: string; // Object property name
+	name: string;
 	label: string;
-	//sortOrder?: number;
-	// tooltip?: string | string[];
 	visible?: Rule[] | boolean;
 	required?: Rule[] | boolean;
 	disabled?: Rule[] | boolean;
@@ -95,16 +93,14 @@ type RadioGroup = FieldBase & {
 
 // Possibly add error strings for each
 
-// If arrays are allowed as values, how do we compare them?
-
-type ValueType = boolean | string | number | string[];
+type Value = boolean | string | number | string[];
 type VarRef = { var: string }; // e.g. { "var": "fieldName" }
-type EqualsRule = { '==': [VarRef, ValueType | VarRef] };
-type NotEqualsRule = { '!=': [VarRef, ValueType | VarRef] };
-type LessThanRule = { '<': [VarRef, ValueType | VarRef] };
-type LessThanOrEqualToRule = { '<=': [VarRef, ValueType | VarRef] };
-type GreaterThanRule = { '>': [VarRef, ValueType | VarRef] };
-type GreaterThanOrEqualToRule = { '>=': [VarRef, ValueType | VarRef] };
+type EqualsRule = { '==': [Value | VarRef, Value | VarRef] };
+type NotEqualsRule = { '!=': [Value | VarRef, Value | VarRef] };
+type LessThanRule = { '<': [Value | VarRef, Value | VarRef] };
+type LessThanOrEqualToRule = { '<=': [Value | VarRef, Value | VarRef] };
+type GreaterThanRule = { '>': [Value | VarRef, Value | VarRef] };
+type GreaterThanOrEqualToRule = { '>=': [Value | VarRef, Value | VarRef] };
 
 // metarules
 type AndRule = { and: Rule[] };
@@ -116,7 +112,7 @@ type Rule = EqualsRule | NotEqualsRule | LessThanRule | LessThanOrEqualToRule | 
 type Config = {
 	title: string;
 	fields: Field[];
-	sections?: Section[];
+	//fields: Field[] | Section[];
 }
 
 type Section = Config & {
@@ -133,7 +129,7 @@ const Form = (config: Config) => {
 		readonly visible: boolean;
 		readonly required: boolean;
 		readonly disabled: boolean;
-		value: ValueType;
+		value: Value;
 		updateState(): void;
 	};
 
@@ -155,45 +151,38 @@ const Form = (config: Config) => {
 		requiredSpan.style.color = 'red';
 		requiredSpan.ariaHidden = 'true';
 		label.replaceChildren(labelSpan, requiredSpan);
-		let input: HTMLInputElement | HTMLTextAreaElement |  HTMLSelectElement | HTMLFieldSetElement;
-		let getValue: () => unknown;
+		let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLFieldSetElement;
+		let getValue: () => Value;
 		let setValue: (val: any) => any;
 		let setRequired: (bool: boolean) => void;
+		let setValid: (bool: boolean) => void;
+		let eventToListenFor: 'change' | 'input' = 'change';
 
-		if (f.type === 'textbox') {
-			// input = document.createElement('input');
-			// input.id = id;
-			// input.name = f.name;
-
-			// input.defaultValue = f.value ?? '';
-			// input.placeholder = f.placeholder ?? '';
-			// if (typeof f.maxLength === 'number') input.maxLength = f.maxLength;
-			// if (typeof f.minLength === 'number') input.minLength = f.minLength;
-			// div.replaceChildren(label, input);
-			// getValue = () => (input as HTMLInputElement).value.trim();
-			// setValue = (val: string) => (input as HTMLInputElement).value = val?.trim() || '';
-			// setRequired = (bool) => {
-			// 	(input as HTMLInputElement).required = !!bool;
-			// 	// Maybe better to handle this manually than rely on pattern
-			// 	//(input as HTMLInputElement).pattern = !!bool ? `^\s*\S.*$` : '';
-			// };
-		}
 		if (f.type === 'textbox' || f.type === 'textarea') {
+			eventToListenFor = 'input'
 			input = document.createElement(f.type === 'textbox' ? 'input' : 'textarea');
-			if (f.type ==='textbox') (input as HTMLInputElement).type = 'text';
+			if (f.type === 'textbox') (input as HTMLInputElement).type = 'text';
 			input.id = id;
 			input.name = f.name;
 			input.defaultValue = f.value ?? '';
-			input.placeholder = f.placeholder ?? '';
-			if (typeof f.maxLength === 'number') input.maxLength = f.maxLength;
-			if (typeof f.minLength === 'number') input.minLength = f.minLength;
+			if (f.placeholder) input.placeholder = f.placeholder;
+			if (f.maxLength && isInteger(f.maxLength)) input.maxLength = f.maxLength;
+			if (f.minLength && isInteger(f.minLength)) input.minLength = f.minLength;
 			div.replaceChildren(label, input);
-			getValue = () => (input as HTMLInputElement).value.trim();
-			setValue = (val: string) => (input as HTMLInputElement).value = val?.trim() || '';
+			getValue = () => (input as (HTMLInputElement | HTMLTextAreaElement)).value.trim();
+			setValue = (val: string) => (input as (HTMLInputElement | HTMLTextAreaElement)).value = typeof val === 'string' ? val.trim() : '';
 			setRequired = (bool) => {
-				(input as HTMLInputElement).required = !!bool;
+				(input as (HTMLInputElement | HTMLTextAreaElement)).required = !!bool;
 				//(input as HTMLInputElement).pattern = !!bool ? `^\s*\S.*$` : '';
 			};
+			setValid = (bool) => {
+				let validityMessage = '';
+				if (!bool) {
+					validityMessage = 'This field is invalid.';
+				}
+				input.setCustomValidity(validityMessage);
+			};
+			// handle custom validity on input or set value
 		}
 		else if (f.type === 'checkbox') {
 			input = document.createElement('input');
@@ -212,26 +201,65 @@ const Form = (config: Config) => {
 			setRequired = (bool) => (input as HTMLInputElement).required = !!bool;
 		}
 		else if (f.type === 'integer' || f.type === 'decimal') {
-			input = document.createElement('input') as HTMLInputElement;
+			const intKeys = new Set([
+				'Backspace',
+				'Delete',
+				'ArrowLeft',
+				'ArrowRight',
+				'ArrowUp',
+				'ArrowDown',
+				'Tab',
+				'Home',
+				'End',
+				'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
+			]);
+			const metaKeys = new Set(['a', 'c', 'v', 'x']);
+			const maxLength = String(f.max ?? 100000).length;
+			eventToListenFor = 'input'
+			input = document.createElement('input');
 			input.id = id;
 			input.name = f.name;
 			input.type = 'number';
 			input.placeholder = f.placeholder ?? '';
-			if (typeof f.max === 'number' && typeof f.min === 'number' && f.min > f.max) {
+			if (isNumeric(f.value)) {
+				input.defaultValue = String(f.value);
+			}
+			if (isNumeric(f.max) && isNumeric(f.min) && f.min > f.max) {
 				f.max = f.min;
 			}
-			if (typeof f.max === 'number') {
+			if (isNumeric(f.max)) {
 				input.max = String(Math.floor(f.max));
-				input.maxLength = input.max.length;
+				//input.maxLength = input.max.length; // Doesn't work. Needs keydown handler
 			}
-			if (typeof f.min === 'number') {
+			if (isNumeric(f.min)) {
 				input.min = String(Math.floor(f.min));
-				if (f.min > 0) input.minLength = input.min.length;
+				//if (f.min > 0) input.minLength = input.min.length;
 			}
 			// set value somewhere
 			// Keydown and input handlers to fix int and dec
 			div.replaceChildren(label, input);
+
+			input.addEventListener('keydown', (e) => {
+				if (intKeys.has(e.key)) return;
+				if ((e.ctrlKey || e.metaKey) && metaKeys.has(e.key.toLowerCase())) return;
+				// Ordering of this makes no sense
+				e.preventDefault(); // Block
+			});
+			// input.addEventListener('keydown', (e) => {
+			// 	if ((input as HTMLInputElement).value.length >= maxLength) e.preventDefault();
+			// });
+			input.addEventListener('input', () => {
+				// Clean on paste, drag, etc
+				(input as HTMLInputElement).value = (input as HTMLInputElement).value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+				//(input as HTMLInputElement).value = (input as HTMLInputElement).value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+			})
+
+
+			getValue = () => (input as HTMLInputElement).valueAsNumber; // Maybe
 			setRequired = (bool) => (input as HTMLInputElement).required = !!bool;
+			setValue = (val: number) => {
+				(input as HTMLInputElement).value = typeof val === 'number' && isFinite(val) ? String(f.type === 'integer' ? Math.floor(val) : val) : '0';
+			};
 		}
 		else if (f.type === 'select') {
 			input = document.createElement('select');
@@ -344,9 +372,7 @@ const Form = (config: Config) => {
 			throw new Error(`field ${(f as Field).name} type invalid`);
 		}
 
-		let _visible = true;
-		let _disabled = false;
-		let _required = false;
+
 
 		// Stretch across entire grid if it's conditionally displayed. Otherwise, you get fields moving around left/right
 		if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
@@ -362,13 +388,14 @@ const Form = (config: Config) => {
 			WATCHERS[fieldName].add(f.name);
 		}
 
-		let eventToListenFor = 'change';
-		if (f.type === 'textbox' || f.type === 'integer' || f.type === 'decimal') {
-			eventToListenFor = 'input';
-		}
 		input.addEventListener(eventToListenFor, () => {
 			fireRecursiveDependencyUpdate(f.name);
 		});
+
+		let _visible = true;
+		let _disabled = false;
+		let _required = false;
+		let _valid = true;
 
 		const internals: FieldInternal = {
 			get type() {
@@ -381,11 +408,13 @@ const Form = (config: Config) => {
 				if (_disabled || !_visible) return getEmptyValue(this);
 				return getValue();
 			},
-			set value(val: any) {
+			set value(val: Value) {
 				setValue(val);
 				fireRecursiveDependencyUpdate(f.name);
 			},
+			//visible: true,
 			get visible() {
+				// These probably don't need to be getters
 				return _visible;
 			},
 			get disabled() {
@@ -401,9 +430,11 @@ const Form = (config: Config) => {
 				_visible = evaluateProperty(f.visible, true);
 				_disabled = evaluateProperty(f.disabled, false);
 				_required = evaluateProperty(f.required, false);
+				_valid = evaluateProperty(f.valid, true);
+
 				if (_visible) {
 					div.style.display = '';
-					input.disabled = false;
+					input.disabled = false || _disabled;
 					//div.style.height = '';
 				}
 				else {
@@ -413,6 +444,7 @@ const Form = (config: Config) => {
 				requiredSpan.style.display = _required ? '' : 'none';
 				setRequired(_required);
 				input.disabled = _disabled || !_visible;
+				//setValid(_valid);
 			}
 		}
 
@@ -420,6 +452,18 @@ const Form = (config: Config) => {
 
 		return internals;
 	};
+
+	const isNumeric = (val: unknown): val is Number => {
+		return typeof val === 'number' && !Number.isNaN(val) && isFinite(val);
+	};
+
+	const isInteger = (val: unknown): boolean => {
+		return isNumeric(val) && Number.isSafeInteger(val);
+	}
+
+	const isDecimal = (val: unknown): boolean => {
+		return isNumeric(val) && !Number.isSafeInteger(val);
+	}
 
 	const isVarRef = (val: unknown): val is VarRef => {
 		return (!!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string');
@@ -482,8 +526,8 @@ const Form = (config: Config) => {
 	};
 
 	/** 
-	 * Figures out what a property should be based on form values.
-	 * Returns default if not defined
+	 * Figures out what a property (required, visible, etc.) should be based on current form state.
+	 * Returns default if not defined. This is constantly run as the form updates
 	 */
 	const evaluateProperty = (propertyVal: Rule[] | boolean | undefined, defaultValue: boolean): boolean => {
 		if (typeof propertyVal === 'boolean') return propertyVal;
@@ -494,9 +538,9 @@ const Form = (config: Config) => {
 	/** 
 		Interprets a side of a rule so we can compare the two sides
 	*/
-	const readRuleSide = (side: VarRef | ValueType): ValueType => {
+	const readRuleSide = (side: VarRef | Value): Value => {
 		if (isVarRef(side)) {
-			return FIELDS[side.var].value as ValueType;
+			return FIELDS[side.var].value as Value;
 		}
 		// Is already some kind of value (ValueType) so we return that.
 		return side;
@@ -510,7 +554,7 @@ const Form = (config: Config) => {
 		return array1.length === array2.length && array1.every((item, i) => item === array2[i]);
 	};
 
-	/** Makes a rule comparison: field value against a set value. 
+	/** Makes a rule comparison: field value against a set value or another field value. 
 	 * A little repetitive, but it's easier to understand doing the operations one by one like this compared to a lookup
 	 * Also needs some type checking, maybe, or else you can do weird things like 'a' < 'aa' etc? This is probably ok
 	 *  Does check for arrays*/
@@ -609,7 +653,7 @@ const Form = (config: Config) => {
 			get() {
 				return fieldInternal.value;
 			},
-			set(value: ValueType) {
+			set(value: Value) {
 				fieldInternal.value = value;
 			},
 			enumerable: true,
@@ -633,7 +677,7 @@ const Form = (config: Config) => {
 			// Returned directly individual properties can be set
 			return valueGetterObject;
 		},
-		set value(val: Record<string, ValueType>) {
+		set value(val: Record<string, Value>) {
 			for (const key in val) {
 				FIELDS[key].value = val[key];
 			}

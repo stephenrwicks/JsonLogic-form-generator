@@ -20,25 +20,34 @@ const Form = (config) => {
         let getValue;
         let setValue;
         let setRequired;
-        if (f.type === 'textbox') {
-        }
+        let setValid;
+        let eventToListenFor = 'change';
         if (f.type === 'textbox' || f.type === 'textarea') {
+            eventToListenFor = 'input';
             input = document.createElement(f.type === 'textbox' ? 'input' : 'textarea');
             if (f.type === 'textbox')
                 input.type = 'text';
             input.id = id;
             input.name = f.name;
             input.defaultValue = f.value ?? '';
-            input.placeholder = f.placeholder ?? '';
-            if (typeof f.maxLength === 'number')
+            if (f.placeholder)
+                input.placeholder = f.placeholder;
+            if (f.maxLength && isInteger(f.maxLength))
                 input.maxLength = f.maxLength;
-            if (typeof f.minLength === 'number')
+            if (f.minLength && isInteger(f.minLength))
                 input.minLength = f.minLength;
             div.replaceChildren(label, input);
             getValue = () => input.value.trim();
-            setValue = (val) => input.value = val?.trim() || '';
+            setValue = (val) => input.value = typeof val === 'string' ? val.trim() : '';
             setRequired = (bool) => {
                 input.required = !!bool;
+            };
+            setValid = (bool) => {
+                let validityMessage = '';
+                if (!bool) {
+                    validityMessage = 'This field is invalid.';
+                }
+                input.setCustomValidity(validityMessage);
             };
         }
         else if (f.type === 'checkbox') {
@@ -58,25 +67,54 @@ const Form = (config) => {
             setRequired = (bool) => input.required = !!bool;
         }
         else if (f.type === 'integer' || f.type === 'decimal') {
+            const intKeys = new Set([
+                'Backspace',
+                'Delete',
+                'ArrowLeft',
+                'ArrowRight',
+                'ArrowUp',
+                'ArrowDown',
+                'Tab',
+                'Home',
+                'End',
+                '1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
+            ]);
+            const metaKeys = new Set(['a', 'c', 'v', 'x']);
+            const maxLength = String(f.max ?? 100000).length;
+            eventToListenFor = 'input';
             input = document.createElement('input');
             input.id = id;
             input.name = f.name;
             input.type = 'number';
             input.placeholder = f.placeholder ?? '';
-            if (typeof f.max === 'number' && typeof f.min === 'number' && f.min > f.max) {
+            if (isNumeric(f.value)) {
+                input.defaultValue = String(f.value);
+            }
+            if (isNumeric(f.max) && isNumeric(f.min) && f.min > f.max) {
                 f.max = f.min;
             }
-            if (typeof f.max === 'number') {
+            if (isNumeric(f.max)) {
                 input.max = String(Math.floor(f.max));
-                input.maxLength = input.max.length;
             }
-            if (typeof f.min === 'number') {
+            if (isNumeric(f.min)) {
                 input.min = String(Math.floor(f.min));
-                if (f.min > 0)
-                    input.minLength = input.min.length;
             }
             div.replaceChildren(label, input);
+            input.addEventListener('keydown', (e) => {
+                if (intKeys.has(e.key))
+                    return;
+                if ((e.ctrlKey || e.metaKey) && metaKeys.has(e.key.toLowerCase()))
+                    return;
+                e.preventDefault();
+            });
+            input.addEventListener('input', () => {
+                input.value = input.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+            });
+            getValue = () => input.valueAsNumber;
             setRequired = (bool) => input.required = !!bool;
+            setValue = (val) => {
+                input.value = typeof val === 'number' && isFinite(val) ? String(f.type === 'integer' ? Math.floor(val) : val) : '0';
+            };
         }
         else if (f.type === 'select') {
             input = document.createElement('select');
@@ -187,9 +225,6 @@ const Form = (config) => {
         else {
             throw new Error(`field ${f.name} type invalid`);
         }
-        let _visible = true;
-        let _disabled = false;
-        let _required = false;
         if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
         }
         for (const fieldName of getFieldNamesToWatch(f)) {
@@ -198,13 +233,13 @@ const Form = (config) => {
             }
             WATCHERS[fieldName].add(f.name);
         }
-        let eventToListenFor = 'change';
-        if (f.type === 'textbox' || f.type === 'integer' || f.type === 'decimal') {
-            eventToListenFor = 'input';
-        }
         input.addEventListener(eventToListenFor, () => {
             fireRecursiveDependencyUpdate(f.name);
         });
+        let _visible = true;
+        let _disabled = false;
+        let _required = false;
+        let _valid = true;
         const internals = {
             get type() {
                 return f.type;
@@ -237,9 +272,10 @@ const Form = (config) => {
                 _visible = evaluateProperty(f.visible, true);
                 _disabled = evaluateProperty(f.disabled, false);
                 _required = evaluateProperty(f.required, false);
+                _valid = evaluateProperty(f.valid, true);
                 if (_visible) {
                     div.style.display = '';
-                    input.disabled = false;
+                    input.disabled = false || _disabled;
                 }
                 else {
                     div.style.display = 'none';
@@ -251,6 +287,15 @@ const Form = (config) => {
         };
         FIELDS[f.name] = internals;
         return internals;
+    };
+    const isNumeric = (val) => {
+        return typeof val === 'number' && !Number.isNaN(val) && isFinite(val);
+    };
+    const isInteger = (val) => {
+        return isNumeric(val) && Number.isSafeInteger(val);
+    };
+    const isDecimal = (val) => {
+        return isNumeric(val) && !Number.isSafeInteger(val);
     };
     const isVarRef = (val) => {
         return (!!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string');
