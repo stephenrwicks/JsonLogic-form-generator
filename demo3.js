@@ -8,7 +8,6 @@ const demo = Form({
             label: 'Full Name',
             value: '',
             required: true,
-            minLength: 10,
         },
         {
             type: 'checkbox',
@@ -66,7 +65,8 @@ const demo = Form({
             type: 'checkboxgroup',
             name: 'secondarySkills',
             label: 'Secondary Skills',
-            value: [],
+            value: ['ts'],
+            disabled: true,
             options: [
                 { text: 'JavaScript', value: 'js' },
                 { text: 'TypeScript', value: 'ts' },

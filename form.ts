@@ -8,7 +8,7 @@ type FieldBase = {
 	visible?: Rule[] | boolean;
 	required?: Rule[] | boolean;
 	disabled?: Rule[] | boolean;
-	valid?: Rule[];
+	valid?: Rule[]; // not used yet
 }
 
 type Textbox = FieldBase & {
@@ -138,6 +138,13 @@ const Form = (config: Config) => {
 	// field name => subscriber names
 	const WATCHERS: Record<string, Set<string>> = {};
 
+	const blockWhiteSpace = ".*\\S.*";
+	const metaKeys = new Set(['a', 'c', 'v', 'x']);
+	const integerAllowedKeys = new Set([
+		'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+		'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
+	]);
+
 	const buildField = (f: Field) => {
 		if (f.name in FIELDS) throw new Error(`"${f.name}" exists in the config twice. Can't have two fields named the same.`)
 		const id = `_${crypto.randomUUID()}`;
@@ -164,7 +171,7 @@ const Form = (config: Config) => {
 			if (f.type === 'textbox') (input as HTMLInputElement).type = 'text';
 			input.id = id;
 			input.name = f.name;
-			input.defaultValue = f.value ?? '';
+			if (f.value) input.defaultValue = f.value ?? '';
 			if (f.placeholder) input.placeholder = f.placeholder;
 			if (f.maxLength && isInteger(f.maxLength)) input.maxLength = f.maxLength;
 			if (f.minLength && isInteger(f.minLength)) input.minLength = f.minLength;
@@ -173,7 +180,8 @@ const Form = (config: Config) => {
 			setValue = (val: string) => (input as (HTMLInputElement | HTMLTextAreaElement)).value = typeof val === 'string' ? val.trim() : '';
 			setRequired = (bool) => {
 				(input as (HTMLInputElement | HTMLTextAreaElement)).required = !!bool;
-				//(input as HTMLInputElement).pattern = !!bool ? `^\s*\S.*$` : '';
+				// Pattern doesn't work on textarea
+				(input as HTMLInputElement).pattern = !!bool ? blockWhiteSpace : '';
 			};
 			setValid = (bool) => {
 				let validityMessage = '';
@@ -201,46 +209,38 @@ const Form = (config: Config) => {
 			setRequired = (bool) => (input as HTMLInputElement).required = !!bool;
 		}
 		else if (f.type === 'integer' || f.type === 'decimal') {
-			const intKeys = new Set([
-				'Backspace',
-				'Delete',
-				'ArrowLeft',
-				'ArrowRight',
-				'ArrowUp',
-				'ArrowDown',
-				'Tab',
-				'Home',
-				'End',
-				'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
-			]);
-			const metaKeys = new Set(['a', 'c', 'v', 'x']);
-			const maxLength = String(f.max ?? 100000).length;
+
+
+			const maxLength = String(f.max).length || 10;
 			eventToListenFor = 'input'
 			input = document.createElement('input');
 			input.id = id;
 			input.name = f.name;
 			input.type = 'number';
 			input.placeholder = f.placeholder ?? '';
+			const hasMin = isNumeric(f.min);
+			const hasMax = isNumeric(f.max);
 			if (isNumeric(f.value)) {
 				input.defaultValue = String(f.value);
 			}
-			if (isNumeric(f.max) && isNumeric(f.min) && f.min > f.max) {
+			if (hasMin && hasMax && f.min! > f.max!) {
 				f.max = f.min;
 			}
-			if (isNumeric(f.max)) {
-				input.max = String(Math.floor(f.max));
+			if (hasMax) {
+				input.max = String(Math.floor(f.max!));
 				//input.maxLength = input.max.length; // Doesn't work. Needs keydown handler
 			}
-			if (isNumeric(f.min)) {
-				input.min = String(Math.floor(f.min));
+			if (hasMin) {
+				input.min = String(Math.floor(f.min!));
 				//if (f.min > 0) input.minLength = input.min.length;
 			}
 			// set value somewhere
 			// Keydown and input handlers to fix int and dec
 			div.replaceChildren(label, input);
 
+			// Browsers aren't great at making number inputs actually work so we will add some keydown help
 			input.addEventListener('keydown', (e) => {
-				if (intKeys.has(e.key)) return;
+				if (integerAllowedKeys.has(e.key)) return;
 				if ((e.ctrlKey || e.metaKey) && metaKeys.has(e.key.toLowerCase())) return;
 				// Ordering of this makes no sense
 				e.preventDefault(); // Block
@@ -251,14 +251,23 @@ const Form = (config: Config) => {
 			input.addEventListener('input', () => {
 				// Clean on paste, drag, etc
 				(input as HTMLInputElement).value = (input as HTMLInputElement).value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
-				//(input as HTMLInputElement).value = (input as HTMLInputElement).value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
-			})
+			});
 
-
-			getValue = () => (input as HTMLInputElement).valueAsNumber; // Maybe
+			getValue = () => {
+				const val = (input as HTMLInputElement).valueAsNumber;
+				if (isNumeric(val)) {
+					if (f.type === 'decimal') return val;
+					return Math.floor(val);
+				}
+				return 0; // Possibly this should actually be null
+			};
 			setRequired = (bool) => (input as HTMLInputElement).required = !!bool;
 			setValue = (val: number) => {
-				(input as HTMLInputElement).value = typeof val === 'number' && isFinite(val) ? String(f.type === 'integer' ? Math.floor(val) : val) : '0';
+				if (!isNumeric(val)) {
+					(input as HTMLInputElement).valueAsNumber = 0;
+					return;
+				}
+				(input as HTMLInputElement).valueAsNumber = f.type === 'integer' ? Math.floor(val) : val;
 			};
 		}
 		else if (f.type === 'select') {
@@ -277,7 +286,7 @@ const Form = (config: Config) => {
 		}
 		else if (f.type === 'checkboxgroup') {
 			const validValues = new Set(f.options.map(o => o.value));
-			const selectedValues = new Set(f.value ?? []);
+			const defaultSelectedValues = new Set(f.value ?? []);
 			input = document.createElement('fieldset');
 			input.id = id;
 			const legend = document.createElement('legend');
@@ -299,7 +308,7 @@ const Form = (config: Config) => {
 				checkbox.type = 'checkbox';
 				checkbox.name = f.name;
 				checkbox.value = o.value;
-				checkbox.defaultChecked = selectedValues.has(o.value);
+				checkbox.defaultChecked = defaultSelectedValues.has(o.value);
 				input.append(label);
 				return checkbox;
 			});
@@ -331,6 +340,7 @@ const Form = (config: Config) => {
 				for (const checkbox of checkboxes) {
 					checkbox.required = !!bool;
 				}
+				requiredSpan.style.display = !!bool ? '' : 'none';
 			};
 		}
 		else if (f.type === 'radiogroup') {
@@ -366,6 +376,7 @@ const Form = (config: Config) => {
 				for (const radio of radios) {
 					radio.required = !!bool;
 				}
+				requiredSpan.style.display = !!bool ? '' : 'none';
 			};
 		}
 		else {
@@ -375,11 +386,11 @@ const Form = (config: Config) => {
 
 
 		// Stretch across entire grid if it's conditionally displayed. Otherwise, you get fields moving around left/right
-		if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
+		//if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
 			//div.style.gridColumn = '1/-1';
 			// div.style.transition = 'height .1s ease-out';
 			// div.style.overflow = 'hidden';
-		}
+		//}
 
 		for (const fieldName of getFieldNamesToWatch(f)) {
 			if (!(WATCHERS[fieldName] instanceof Set)) {
@@ -453,6 +464,8 @@ const Form = (config: Config) => {
 		return internals;
 	};
 
+
+
 	const isNumeric = (val: unknown): val is Number => {
 		return typeof val === 'number' && !Number.isNaN(val) && isFinite(val);
 	};
@@ -466,7 +479,7 @@ const Form = (config: Config) => {
 	}
 
 	const isVarRef = (val: unknown): val is VarRef => {
-		return (!!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string');
+		return !!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string';
 	}
 
 	// To implement contextual rules that compare against current day, etc., will need custom operators with context:
@@ -540,9 +553,9 @@ const Form = (config: Config) => {
 	*/
 	const readRuleSide = (side: VarRef | Value): Value => {
 		if (isVarRef(side)) {
-			return FIELDS[side.var].value as Value;
+			return FIELDS[side.var].value;
 		}
-		// Is already some kind of value (ValueType) so we return that.
+		// Is already some kind of value so we return that.
 		return side;
 	}
 
@@ -641,8 +654,35 @@ const Form = (config: Config) => {
 	submitButton.type = 'submit';
 	submitButton.textContent = 'Submit';
 
+
+	const clear = () => {
+		for (const f of Object.values(FIELDS)) {
+			f.value = getEmptyValue(f);
+		}
+		return valueGetterObject;
+	};
+	const clearButton = document.createElement('button');
+	clearButton.type = 'button';
+	clearButton.textContent = 'Clear';
+	clearButton.addEventListener('click', clear);
+
+	const resetButton = document.createElement('button');
+
+	// Using the actual 'reset' button didn't work here
+	const reset = () => {
+		form.reset();
+		for (const fieldInternal of Object.values(FIELDS)) {
+			fieldInternal.updateState();
+		}
+		return valueGetterObject;
+	}
+
+	resetButton.type = 'button';
+	resetButton.addEventListener('click', reset);
+	resetButton.textContent = 'Reset';
+
 	const buttonRow = document.createElement('div');
-	buttonRow.replaceChildren(submitButton);
+	buttonRow.replaceChildren(resetButton, clearButton, submitButton);
 
 	// use create null so you have no prototype properties in the way.
 	const valueGetterObject = Object.create(null);
@@ -683,17 +723,10 @@ const Form = (config: Config) => {
 			}
 		},
 		clear() {
-			for (const f of Object.values(FIELDS)) {
-				f.value = getEmptyValue(f);
-			}
-			return this.value;
+			return clear();
 		},
 		reset() {
-			form.reset();
-			for (const fieldInternal of Object.values(FIELDS)) {
-				fieldInternal.updateState();
-			}
-			return this.value;
+			return reset();
 		},
 		get json() {
 			return JSON.stringify(valueGetterObject);

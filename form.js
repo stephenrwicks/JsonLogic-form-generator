@@ -2,6 +2,12 @@
 const Form = (config) => {
     const FIELDS = {};
     const WATCHERS = {};
+    const blockWhiteSpace = ".*\\S.*";
+    const metaKeys = new Set(['a', 'c', 'v', 'x']);
+    const integerAllowedKeys = new Set([
+        'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+        '1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
+    ]);
     const buildField = (f) => {
         if (f.name in FIELDS)
             throw new Error(`"${f.name}" exists in the config twice. Can't have two fields named the same.`);
@@ -29,7 +35,8 @@ const Form = (config) => {
                 input.type = 'text';
             input.id = id;
             input.name = f.name;
-            input.defaultValue = f.value ?? '';
+            if (f.value)
+                input.defaultValue = f.value ?? '';
             if (f.placeholder)
                 input.placeholder = f.placeholder;
             if (f.maxLength && isInteger(f.maxLength))
@@ -41,6 +48,7 @@ const Form = (config) => {
             setValue = (val) => input.value = typeof val === 'string' ? val.trim() : '';
             setRequired = (bool) => {
                 input.required = !!bool;
+                input.pattern = !!bool ? blockWhiteSpace : '';
             };
             setValid = (bool) => {
                 let validityMessage = '';
@@ -67,41 +75,30 @@ const Form = (config) => {
             setRequired = (bool) => input.required = !!bool;
         }
         else if (f.type === 'integer' || f.type === 'decimal') {
-            const intKeys = new Set([
-                'Backspace',
-                'Delete',
-                'ArrowLeft',
-                'ArrowRight',
-                'ArrowUp',
-                'ArrowDown',
-                'Tab',
-                'Home',
-                'End',
-                '1', '2', '3', '4', '5', '6', '7', '8', '9', '0'
-            ]);
-            const metaKeys = new Set(['a', 'c', 'v', 'x']);
-            const maxLength = String(f.max ?? 100000).length;
+            const maxLength = String(f.max).length || 10;
             eventToListenFor = 'input';
             input = document.createElement('input');
             input.id = id;
             input.name = f.name;
             input.type = 'number';
             input.placeholder = f.placeholder ?? '';
+            const hasMin = isNumeric(f.min);
+            const hasMax = isNumeric(f.max);
             if (isNumeric(f.value)) {
                 input.defaultValue = String(f.value);
             }
-            if (isNumeric(f.max) && isNumeric(f.min) && f.min > f.max) {
+            if (hasMin && hasMax && f.min > f.max) {
                 f.max = f.min;
             }
-            if (isNumeric(f.max)) {
+            if (hasMax) {
                 input.max = String(Math.floor(f.max));
             }
-            if (isNumeric(f.min)) {
+            if (hasMin) {
                 input.min = String(Math.floor(f.min));
             }
             div.replaceChildren(label, input);
             input.addEventListener('keydown', (e) => {
-                if (intKeys.has(e.key))
+                if (integerAllowedKeys.has(e.key))
                     return;
                 if ((e.ctrlKey || e.metaKey) && metaKeys.has(e.key.toLowerCase()))
                     return;
@@ -110,10 +107,22 @@ const Form = (config) => {
             input.addEventListener('input', () => {
                 input.value = input.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
             });
-            getValue = () => input.valueAsNumber;
+            getValue = () => {
+                const val = input.valueAsNumber;
+                if (isNumeric(val)) {
+                    if (f.type === 'decimal')
+                        return val;
+                    return Math.floor(val);
+                }
+                return 0;
+            };
             setRequired = (bool) => input.required = !!bool;
             setValue = (val) => {
-                input.value = typeof val === 'number' && isFinite(val) ? String(f.type === 'integer' ? Math.floor(val) : val) : '0';
+                if (!isNumeric(val)) {
+                    input.valueAsNumber = 0;
+                    return;
+                }
+                input.valueAsNumber = f.type === 'integer' ? Math.floor(val) : val;
             };
         }
         else if (f.type === 'select') {
@@ -132,7 +141,7 @@ const Form = (config) => {
         }
         else if (f.type === 'checkboxgroup') {
             const validValues = new Set(f.options.map(o => o.value));
-            const selectedValues = new Set(f.value ?? []);
+            const defaultSelectedValues = new Set(f.value ?? []);
             input = document.createElement('fieldset');
             input.id = id;
             const legend = document.createElement('legend');
@@ -153,7 +162,7 @@ const Form = (config) => {
                 checkbox.type = 'checkbox';
                 checkbox.name = f.name;
                 checkbox.value = o.value;
-                checkbox.defaultChecked = selectedValues.has(o.value);
+                checkbox.defaultChecked = defaultSelectedValues.has(o.value);
                 input.append(label);
                 return checkbox;
             });
@@ -185,6 +194,7 @@ const Form = (config) => {
                 for (const checkbox of checkboxes) {
                     checkbox.required = !!bool;
                 }
+                requiredSpan.style.display = !!bool ? '' : 'none';
             };
         }
         else if (f.type === 'radiogroup') {
@@ -220,12 +230,11 @@ const Form = (config) => {
                 for (const radio of radios) {
                     radio.required = !!bool;
                 }
+                requiredSpan.style.display = !!bool ? '' : 'none';
             };
         }
         else {
             throw new Error(`field ${f.name} type invalid`);
-        }
-        if (typeof f.visible === 'boolean' || Array.isArray(f.visible)) {
         }
         for (const fieldName of getFieldNamesToWatch(f)) {
             if (!(WATCHERS[fieldName] instanceof Set)) {
@@ -298,7 +307,7 @@ const Form = (config) => {
         return isNumeric(val) && !Number.isSafeInteger(val);
     };
     const isVarRef = (val) => {
-        return (!!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string');
+        return !!val && typeof val === 'object' && 'var' in val && typeof val.var === 'string';
     };
     const getFieldNamesToWatch = (field) => {
         const resultSet = new Set();
@@ -446,8 +455,29 @@ const Form = (config) => {
     const submitButton = document.createElement('button');
     submitButton.type = 'submit';
     submitButton.textContent = 'Submit';
+    const clear = () => {
+        for (const f of Object.values(FIELDS)) {
+            f.value = getEmptyValue(f);
+        }
+        return valueGetterObject;
+    };
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.textContent = 'Clear';
+    clearButton.addEventListener('click', clear);
+    const resetButton = document.createElement('button');
+    const reset = () => {
+        form.reset();
+        for (const fieldInternal of Object.values(FIELDS)) {
+            fieldInternal.updateState();
+        }
+        return valueGetterObject;
+    };
+    resetButton.type = 'button';
+    resetButton.addEventListener('click', reset);
+    resetButton.textContent = 'Reset';
     const buttonRow = document.createElement('div');
-    buttonRow.replaceChildren(submitButton);
+    buttonRow.replaceChildren(resetButton, clearButton, submitButton);
     const valueGetterObject = Object.create(null);
     for (const f of config.fields) {
         const fieldInternal = buildField(f);
@@ -478,17 +508,10 @@ const Form = (config) => {
             }
         },
         clear() {
-            for (const f of Object.values(FIELDS)) {
-                f.value = getEmptyValue(f);
-            }
-            return this.value;
+            return clear();
         },
         reset() {
-            form.reset();
-            for (const fieldInternal of Object.values(FIELDS)) {
-                fieldInternal.updateState();
-            }
-            return this.value;
+            return reset();
         },
         get json() {
             return JSON.stringify(valueGetterObject);
